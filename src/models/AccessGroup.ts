@@ -9,10 +9,6 @@ export interface IAccessGroup extends Document {
 
   users: mongoose.Types.ObjectId[];
 
-  resources: mongoose.Types.ObjectId[];
-
-  isActive: boolean;
-
   createdAt: Date;
   updatedAt: Date;
 }
@@ -42,25 +38,16 @@ const AccessGroupSchema = new Schema<IAccessGroup>(
         ref: 'User',
       },
     ],
-
-    resources: [
-      {
-        type: Schema.Types.ObjectId,
-        ref: 'Resource',
-      },
-    ],
-
-    isActive: {
-      type: Boolean,
-      default: true,
-    },
   },
   {
     timestamps: true,
   }
 );
 
-AccessGroupSchema.index({ organizationId: 1 });
+AccessGroupSchema.index({
+  organizationId: 1,
+  name: 1,
+});
 
 export default mongoose.model<IAccessGroup>(
   'AccessGroup',

@@ -2,27 +2,37 @@ import mongoose, { Document, Schema } from 'mongoose';
 
 export interface IResource extends Document {
   name: string;
-  description?: string;
+
+  type:
+    | 'room'
+    | 'lab'
+    | 'desk'
+    | 'equipment'
+    | 'vehicle'
+    | 'court'
+    | 'other';
 
   organizationId: mongoose.Types.ObjectId;
-  resourceTypeId: mongoose.Types.ObjectId;
 
-  managedBy?: mongoose.Types.ObjectId;
+  accessGroupId?: mongoose.Types.ObjectId;
 
   building?: string;
-  floor?: string;
 
-  capacity: number;
+  location?: string;
 
-  photoUrl?: string;
+  capacity?: number;
 
   amenities: string[];
 
-  approvalRequired: boolean;
+  photoUrl?: string;
+
+  requiresApproval: boolean;
 
   bufferTime: number;
 
   isActive: boolean;
+
+  createdBy: mongoose.Types.ObjectId;
 
   createdAt: Date;
   updatedAt: Date;
@@ -36,9 +46,18 @@ const ResourceSchema = new Schema<IResource>(
       trim: true,
     },
 
-    description: {
+    type: {
       type: String,
-      trim: true,
+      enum: [
+        'room',
+        'lab',
+        'desk',
+        'equipment',
+        'vehicle',
+        'court',
+        'other',
+      ],
+      required: true,
     },
 
     organizationId: {
@@ -47,15 +66,9 @@ const ResourceSchema = new Schema<IResource>(
       required: true,
     },
 
-    resourceTypeId: {
+    accessGroupId: {
       type: Schema.Types.ObjectId,
-      ref: 'ResourceType',
-      required: true,
-    },
-
-    managedBy: {
-      type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: 'AccessGroup',
     },
 
     building: {
@@ -63,29 +76,28 @@ const ResourceSchema = new Schema<IResource>(
       trim: true,
     },
 
-    floor: {
+    location: {
       type: String,
       trim: true,
     },
 
     capacity: {
       type: Number,
-      required: true,
+      default: 1,
       min: 1,
-    },
-
-    photoUrl: {
-      type: String,
     },
 
     amenities: [
       {
         type: String,
-        trim: true,
       },
     ],
 
-    approvalRequired: {
+    photoUrl: {
+      type: String,
+    },
+
+    requiresApproval: {
       type: Boolean,
       default: false,
     },
@@ -99,6 +111,12 @@ const ResourceSchema = new Schema<IResource>(
       type: Boolean,
       default: true,
     },
+
+    createdBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
   },
   {
     timestamps: true,
@@ -106,8 +124,8 @@ const ResourceSchema = new Schema<IResource>(
 );
 
 ResourceSchema.index({ organizationId: 1 });
-ResourceSchema.index({ resourceTypeId: 1 });
-ResourceSchema.index({ managedBy: 1 });
+ResourceSchema.index({ type: 1 });
+ResourceSchema.index({ accessGroupId: 1 });
 
 export default mongoose.model<IResource>(
   'Resource',

@@ -3,11 +3,11 @@ import mongoose, { Document, Schema } from 'mongoose';
 export interface IBlackoutDate extends Document {
   resourceId: mongoose.Types.ObjectId;
 
-  startTime: Date;
+  startDate: Date;
 
-  endTime: Date;
+  endDate: Date;
 
-  reason: string;
+  reason?: string;
 
   createdBy: mongoose.Types.ObjectId;
 
@@ -23,19 +23,18 @@ const BlackoutDateSchema = new Schema<IBlackoutDate>(
       required: true,
     },
 
-    startTime: {
+    startDate: {
       type: Date,
       required: true,
     },
 
-    endTime: {
+    endDate: {
       type: Date,
       required: true,
     },
 
     reason: {
       type: String,
-      required: true,
       trim: true,
     },
 
@@ -50,8 +49,11 @@ const BlackoutDateSchema = new Schema<IBlackoutDate>(
   }
 );
 
-BlackoutDateSchema.index({ resourceId: 1 });
-BlackoutDateSchema.index({ startTime: 1, endTime: 1 });
+BlackoutDateSchema.index({
+  resourceId: 1,
+  startDate: 1,
+  endDate: 1,
+});
 
 export default mongoose.model<IBlackoutDate>(
   'BlackoutDate',

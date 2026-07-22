@@ -6,15 +6,18 @@ export interface IUser extends Document {
   email: string;
   password?: string;
 
-  role: 'super_admin' | 'space_admin' | 'member';
+  role: 'super_admin' | 'space_admin' | 'member' | 'guest';
 
   organizationId?: mongoose.Types.ObjectId;
 
   department?: string;
   photoUrl?: string;
+  phone?: string;
 
   isVerified: boolean;
   isActive: boolean;
+
+  lastLogin?: Date;
 
   createdAt: Date;
   updatedAt: Date;
@@ -51,13 +54,14 @@ const UserSchema = new Schema<IUser>(
 
     role: {
       type: String,
-      enum: ['super_admin', 'space_admin', 'member'],
+      enum: ['super_admin', 'space_admin', 'member', 'guest'],
       default: 'member',
     },
 
     organizationId: {
       type: Schema.Types.ObjectId,
       ref: 'Organization',
+      default: null,
     },
 
     department: {
@@ -69,6 +73,11 @@ const UserSchema = new Schema<IUser>(
       type: String,
     },
 
+    phone: {
+      type: String,
+      trim: true,
+    },
+
     isVerified: {
       type: Boolean,
       default: false,
@@ -77,6 +86,10 @@ const UserSchema = new Schema<IUser>(
     isActive: {
       type: Boolean,
       default: true,
+    },
+
+    lastLogin: {
+      type: Date,
     },
   },
   {

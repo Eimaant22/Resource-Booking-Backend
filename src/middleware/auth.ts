@@ -27,6 +27,7 @@ export const protect = async (
 
         const decoded = verifyToken(token);
         req.userId = decoded.id;
+
         next();
     } catch {
         next(new AppError('Invalid or expired token.', 401, 'UNAUTHENTICATED'));

@@ -1,9 +1,20 @@
 import express from 'express';
 import cors from 'cors';
 
+// Routes
 import authRoutes from './routes/auth.routes';
 import userRoutes from './routes/user.routes';
+import organizationRoutes from './routes/organization.routes';
+import resourceRoutes from './routes/resource.routes';
+import accessGroupRoutes from './routes/accessGroup.routes';
+import bookingRoutes from './routes/booking.routes';
+import approvalRoutes from './routes/approval.routes';
+import notificationRoutes from './routes/notification.routes';
+import analyticsRoutes from './routes/analytics.routes';
+import calendarRoutes from './routes/calendar.routes';
+import settingsRoutes from './routes/settings.routes';
 
+// Middleware
 import errorHandler from './middleware/errorHandler';
 import { globalLimiter } from './middleware/rateLimiter';
 
@@ -20,8 +31,15 @@ app.use('/api', globalLimiter);
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
-
-
+app.use('/api/organizations', organizationRoutes);
+app.use('/api/resources', resourceRoutes);
+app.use('/api/access-groups', accessGroupRoutes);
+app.use('/api/bookings', bookingRoutes);
+app.use('/api/approvals', approvalRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/calendar', calendarRoutes);
+app.use('/api/settings', settingsRoutes);
 
 // Health Check
 app.get('/api/health', (_req, res) => {

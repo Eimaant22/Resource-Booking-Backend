@@ -3,19 +3,19 @@ import mongoose, { Document, Schema } from 'mongoose';
 export interface INotification extends Document {
   userId: mongoose.Types.ObjectId;
 
+  bookingId?: mongoose.Types.ObjectId;
+
   title: string;
 
   message: string;
 
   type:
-    | 'booking_created'
-    | 'booking_approved'
-    | 'booking_rejected'
-    | 'booking_cancelled'
+    | 'booking_confirmation'
     | 'booking_reminder'
-    | 'system';
-
-  bookingId?: mongoose.Types.ObjectId;
+    | 'approval'
+    | 'rejection'
+    | 'check_in'
+    | 'general';
 
   isRead: boolean;
 
@@ -29,6 +29,11 @@ const NotificationSchema = new Schema<INotification>(
       type: Schema.Types.ObjectId,
       ref: 'User',
       required: true,
+    },
+
+    bookingId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Booking',
     },
 
     title: {
@@ -46,19 +51,14 @@ const NotificationSchema = new Schema<INotification>(
     type: {
       type: String,
       enum: [
-        'booking_created',
-        'booking_approved',
-        'booking_rejected',
-        'booking_cancelled',
+        'booking_confirmation',
         'booking_reminder',
-        'system',
+        'approval',
+        'rejection',
+        'check_in',
+        'general',
       ],
-      required: true,
-    },
-
-    bookingId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Booking',
+      default: 'general',
     },
 
     isRead: {
@@ -72,7 +72,6 @@ const NotificationSchema = new Schema<INotification>(
 );
 
 NotificationSchema.index({ userId: 1 });
-NotificationSchema.index({ isRead: 1 });
 
 export default mongoose.model<INotification>(
   'Notification',

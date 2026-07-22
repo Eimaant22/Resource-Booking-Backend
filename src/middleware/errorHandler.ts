@@ -10,17 +10,21 @@ const errorHandler = (
     if (err instanceof AppError) {
         res.status(err.statusCode).json({
             success: false,
-            error: { code: err.code, message: err.message },
+            error: {
+                code: err.code,
+                message: err.message,
+            },
         });
         return;
     }
 
-    console.error('Unhandled error:', err);
+    console.error(err);
+
     res.status(500).json({
         success: false,
         error: {
             code: 'INTERNAL_SERVER_ERROR',
-            message: 'Something went wrong. Please try again later.',
+            message: 'Something went wrong.',
         },
     });
 };

@@ -3,15 +3,18 @@ import mongoose, { Document, Schema } from 'mongoose';
 export interface IOrganization extends Document {
   name: string;
   description?: string;
-  logoUrl?: string;
 
   address?: string;
+  city?: string;
+  country?: string;
 
   timezone: string;
 
-  ownerId: mongoose.Types.ObjectId;
+  logoUrl?: string;
 
   isActive: boolean;
+
+  createdBy: mongoose.Types.ObjectId;
 
   createdAt: Date;
   updatedAt: Date;
@@ -31,11 +34,17 @@ const OrganizationSchema = new Schema<IOrganization>(
       trim: true,
     },
 
-    logoUrl: {
+    address: {
       type: String,
+      trim: true,
     },
 
-    address: {
+    city: {
+      type: String,
+      trim: true,
+    },
+
+    country: {
       type: String,
       trim: true,
     },
@@ -45,15 +54,19 @@ const OrganizationSchema = new Schema<IOrganization>(
       default: 'UTC',
     },
 
-    ownerId: {
-      type: Schema.Types.ObjectId,
-      ref: 'User',
-      required: true,
+    logoUrl: {
+      type: String,
     },
 
     isActive: {
       type: Boolean,
       default: true,
+    },
+
+    createdBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
     },
   },
   {
@@ -61,7 +74,7 @@ const OrganizationSchema = new Schema<IOrganization>(
   }
 );
 
-OrganizationSchema.index({ ownerId: 1 });
+OrganizationSchema.index({ name: 1 });
 
 export default mongoose.model<IOrganization>(
   'Organization',
