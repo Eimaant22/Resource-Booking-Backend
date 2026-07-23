@@ -12,6 +12,7 @@ import approvalRoutes from './routes/approval.routes';
 import notificationRoutes from './routes/notification.routes';
 import analyticsRoutes from './routes/analytics.routes';
 import calendarRoutes from './routes/calendar.routes';
+import auditLogRoutes from './routes/auditLog.routes';
 
 
 // Middleware
@@ -39,6 +40,7 @@ app.use('/api/approvals', approvalRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/calendar', calendarRoutes);
+app.use('/api/audit-logs', auditLogRoutes);
 
 
 // Health Check
