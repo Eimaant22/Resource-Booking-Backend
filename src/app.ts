@@ -12,7 +12,7 @@ import approvalRoutes from './routes/approval.routes';
 import notificationRoutes from './routes/notification.routes';
 import analyticsRoutes from './routes/analytics.routes';
 import calendarRoutes from './routes/calendar.routes';
-import settingsRoutes from './routes/settings.routes';
+
 
 // Middleware
 import errorHandler from './middleware/errorHandler';
@@ -39,7 +39,7 @@ app.use('/api/approvals', approvalRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/calendar', calendarRoutes);
-app.use('/api/settings', settingsRoutes);
+
 
 // Health Check
 app.get('/api/health', (_req, res) => {
