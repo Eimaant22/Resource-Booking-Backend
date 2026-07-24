@@ -1,6 +1,441 @@
-# Module 2: User Management
+# SpaceSync-Resource-Booking-Platform
+
+**Stack:** Node.js · TypeScript · Express · MongoDB · Redis  · JWT Auth
+
+> **Base URL:** `/api`
+> **Auth scheme:** Bearer JWT in the `Authorization` header, issued at signup verification and login.
+
+```http
+Authorization: Bearer <token>
+```
+
+Unless noted otherwise, all request/response bodies are `application/json`, and all endpoints except Auth require a valid Bearer token.
 
 ---
+
+## 1. Auth
+
+### 1.1 Sign Up
+
+Creates an unverified user account and sends a 6-digit OTP to the provided email. The account cannot be used until the OTP is verified via [1.2 Verify OTP](#12-verify-otp).
+
+**Endpoint:** `POST /api/auth/signup`
+**Auth required:** No
+
+**Body Parameters**
+
+| Field      | Type   | Required | Description                                                  |
+| ---------- | ------ | -------- | ------------------------------------------------------------ |
+| `username` | string | Yes      | Unique handle — 3–20 chars, letters/numbers/underscores only |
+| `name`     | string | Yes      | Display name (freely changeable later)                       |
+| `email`    | string | Yes      | Unique email address                                         |
+| `password` | string | Yes      | Minimum 8 characters                                         |
+
+**Request Example**
+
+```json
+{
+  "username": "ayesha_k",
+  "name": "Ayesha Khan",
+  "email": "ayesha@example.com",
+  "password": "SecurePass123"
+}
+```
+
+**Success Response — `201 Created`**
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": "OTP sent to email. Please verify to complete signup."
+  }
+}
+```
+
+**Fail Response — `409 Conflict`** (email already registered)
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "EMAIL_IN_USE",
+    "message": "An account with this email already exists."
+  }
+}
+```
+
+**Fail Response — `409 Conflict`** (username already taken)
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "USERNAME_TAKEN",
+    "message": "This username is already taken."
+  }
+}
+```
+
+**Fail Response — `422 Unprocessable Entity`**
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "username must be 3–20 characters and contain only letters, numbers, or underscores."
+  }
+}
+```
+
+> **Note:** If a user signs up with an email that already exists but was never verified, the existing unverified record is overwritten and a fresh OTP is sent.
+
+---
+
+### 1.2 Verify OTP
+
+Verifies the OTP sent during signup. On success the account is marked as verified and a JWT is returned — the user is immediately logged in.
+
+**Endpoint:** `POST /api/auth/verify-otp`
+**Auth required:** No
+
+**Body Parameters**
+
+| Field   | Type   | Required | Description                              |
+| ------- | ------ | -------- | ---------------------------------------- |
+| `email` | string | Yes      | The email used during signup             |
+| `otp`   | string | Yes      | 6-digit code from the verification email |
+
+**Request Example**
+
+```json
+{
+  "email": "ayesha@example.com",
+  "otp": "482910"
+}
+```
+
+**Success Response — `200 OK`**
+
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "_id": "65f1c2e4a1b2c3d4e5f6a7b8",
+      "username": "ayesha_k",
+      "name": "Ayesha Khan",
+      "email": "ayesha@example.com",
+      "createdAt": "2026-07-12T10:00:00.000Z"
+    },
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  }
+}
+```
+
+**Fail Response — `400 Bad Request`**
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_OTP",
+    "message": "Invalid or expired OTP."
+  }
+}
+```
+
+**Fail Response — `404 Not Found`**
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "USER_NOT_FOUND",
+    "message": "No account found for this email."
+  }
+}
+```
+
+> **Note:** OTPs expire after **10 minutes** and are single-use — deleted from Redis immediately after successful verification.
+
+---
+
+### 1.3 Log In
+
+Authenticates a user with either their email or username plus password, and returns a JWT.
+
+**Endpoint:** `POST /api/auth/login`
+**Auth required:** No
+
+**Body Parameters**
+
+| Field        | Type   | Required | Description                      |
+| ------------ | ------ | -------- | -------------------------------- |
+| `identifier` | string | Yes      | The user's email **or** username |
+| `password`   | string | Yes      | Account password                 |
+
+**Request Example**
+
+```json
+{
+  "identifier": "ayesha_k",
+  "password": "SecurePass123"
+}
+```
+
+**Success Response — `200 OK`**
+
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "_id": "65f1c2e4a1b2c3d4e5f6a7b8",
+      "username": "ayesha_k",
+      "name": "Ayesha Khan",
+      "email": "ayesha@example.com"
+    },
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  }
+}
+```
+
+**Fail Response — `401 Unauthorized`**
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_CREDENTIALS",
+    "message": "Credentials are incorrect."
+  }
+}
+```
+
+**Fail Response — `403 Forbidden`** (account not yet verified)
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "EMAIL_NOT_VERIFIED",
+    "message": "Please verify your email before logging in."
+  }
+}
+```
+
+> **Note:** The `identifier` field accepts both email addresses and usernames. The server detects which was sent by checking for the presence of `@`.
+
+---
+
+### 1.4 Log Out
+
+Invalidates the current JWT by writing it to a Redis blacklist with a TTL equal to the token's remaining lifetime. Any subsequent request using this token will be rejected with `401`.
+
+**Endpoint:** `POST /api/auth/logout`
+**Auth required:** Yes
+
+**Success Response — `200 OK`**
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Logged out successfully."
+  }
+}
+```
+
+**Fail Response — `401 Unauthorized`**
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "UNAUTHENTICATED",
+    "message": "Invalid or expired token."
+  }
+}
+```
+
+---
+
+### 1.5 Forgot Password
+
+Sends a 6-digit OTP to the provided email if a verified account exists. The response is always identical whether or not the email is found, to prevent email enumeration.
+
+**Endpoint:** `POST /api/auth/forgot-password`
+**Auth required:** No
+
+**Body Parameters**
+
+| Field   | Type   | Required | Description                  |
+| ------- | ------ | -------- | ---------------------------- |
+| `email` | string | Yes      | Email address of the account |
+
+**Request Example**
+
+```json
+{
+  "email": "ayesha@example.com"
+}
+```
+
+**Success Response — `200 OK`**
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": "If an account with that email exists, an OTP has been sent."
+  }
+}
+```
+
+**Fail Response — `422 Unprocessable Entity`**
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "email is required."
+  }
+}
+```
+
+---
+
+### 1.6 Verify Reset OTP
+
+Verifies the password-reset OTP. On success, returns a short-lived `resetToken` that must be passed to [1.7 Reset Password](#17-reset-password).
+
+**Endpoint:** `POST /api/auth/verify-reset-otp`
+**Auth required:** No
+
+**Body Parameters**
+
+| Field   | Type   | Required | Description                      |
+| ------- | ------ | -------- | -------------------------------- |
+| `email` | string | Yes      | Email address of the account     |
+| `otp`   | string | Yes      | 6-digit OTP from the reset email |
+
+**Request Example**
+
+```json
+{
+  "email": "ayesha@example.com",
+  "otp": "739201"
+}
+```
+
+**Success Response — `200 OK`**
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": "OTP verified. Use the resetToken to set a new password.",
+    "resetToken": "a3f9c2e1d4b7a3f9c2e1d4b7..."
+  }
+}
+```
+
+**Fail Response — `400 Bad Request`**
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_OTP",
+    "message": "Invalid or expired OTP."
+  }
+}
+```
+
+> **Note:** The `resetToken` expires in **15 minutes** and is single-use. Keep it in memory only — do not persist it.
+
+---
+
+### 1.7 Reset Password
+
+Sets a new password using the `resetToken` obtained from [1.6 Verify Reset OTP](#16-verify-reset-otp). The reset token is consumed and cannot be reused.
+
+**Endpoint:** `POST /api/auth/reset-password`
+**Auth required:** No
+
+**Body Parameters**
+
+| Field         | Type   | Required | Description                           |
+| ------------- | ------ | -------- | ------------------------------------- |
+| `email`       | string | Yes      | Email address of the account          |
+| `resetToken`  | string | Yes      | Token returned by `/verify-reset-otp` |
+| `newPassword` | string | Yes      | New password, minimum 8 characters    |
+
+**Request Example**
+
+```json
+{
+  "email": "ayesha@example.com",
+  "resetToken": "a3f9c2e1d4b7a3f9c2e1d4b7...",
+  "newPassword": "NewSecurePass456"
+}
+```
+
+**Success Response — `200 OK`**
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Password reset successfully. Please log in."
+  }
+}
+```
+
+**Fail Response — `400 Bad Request`**
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_RESET_TOKEN",
+    "message": "Invalid or expired reset token."
+  }
+}
+```
+
+**Fail Response — `404 Not Found`**
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "USER_NOT_FOUND",
+    "message": "No account found for this email."
+  }
+}
+```
+
+**Fail Response — `422 Unprocessable Entity`**
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "newPassword must be at least 8 characters."
+  }
+}
+```
+
+
+
+
+---
+# Module 2: User Management
 
 # Controller: getProfile
 
@@ -45,6 +480,27 @@ Authorization: Bearer <JWT_TOKEN>
 | 404 | User not found |
 | 500 | Internal server error |
 
+```json
+{
+    "success": true,
+    "data": {
+        "user": {
+            "_id": "6a634ff1653c02679df3cfb9",
+            "username": "superadmin",
+            "name": "System Super Admin",
+            "email": "superadmin@spacesync.com",
+            "role": "super_admin",
+            "organizationId": null,
+            "department": "Administration",
+            "photoUrl": "https://i.pravatar.cc/300?img=1",
+            "phone": "+923001111111",
+            "isVerified": true,
+            "isActive": true
+        }
+    }
+}
+```
+
 ## Frontend Usage (PRD)
 
 Used on the **Profile** and **Account Settings** page to display the logged-in user's information after login.
@@ -60,6 +516,16 @@ Used on the **Profile** and **Account Settings** page to display the logged-in u
 ## Purpose
 
 Allows the logged-in user to update their personal information such as name, phone number, department, and profile photo.
+## Updatable Fields
+
+| Field | Type | Required for Update | Description |
+|-------|------|---------------------|-------------|
+| `name` | String | No | User's full name. |
+| `phone` | String | No | User's contact number. |
+| `department` | String | No | User's department or designation. |
+| `photoUrl` | String | No | URL of the user's profile picture. |
+
+> **Note:** All fields are optional during profile update. Only the fields provided in the request body will be updated. Fields such as `username`, `email`, `role`, `organizationId`, `isVerified`, `isActive`, and `password` cannot be updated through this endpoint.
 
 ## API Details
 
@@ -101,6 +567,29 @@ Allows the logged-in user to update their personal information such as name, pho
 | 404 | User not found |
 | 500 | Internal server error |
 
+```json
+{
+    "success": true,
+    "data": {
+        "message": "Profile updated successfully.",
+        "user": {
+            "_id": "6a634ff1653c02679df3cfb9",
+            "username": "superadmin",
+            "name": "John Doe",
+            "email": "superadmin@spacesync.com",
+            "role": "super_admin",
+            "organizationId": null,
+            "department": "Computer Science",
+            "photoUrl": "https://example.com/profile.jpg",
+            "phone": "+923001234567",
+            "isVerified": true,
+            "isActive": true,
+            "updatedAt": "2026-07-24T11:57:19.732Z"
+        }
+    }
+    }
+```
+
 ## Frontend Usage (PRD)
 
 Used on the **Edit Profile** page when a user updates their personal information.
@@ -108,11 +597,6 @@ Used on the **Edit Profile** page when a user updates their personal information
 ## Models Used
 
 - User
-
-## Notes
-
-- ✅ Good implementation.
-- Consider adding request validation for phone number and URL format.
 
 ---
 
@@ -158,6 +642,185 @@ GET /api/users?search=john&role=member&isActive=true
 | 404 | Logged-in user not found |
 | 500 | Internal server error |
 
+```json
+{
+    "success": true,
+    "data": {
+        "users": [
+            {
+                "_id": "6a634ff1653c02679df3cfc1",
+                "username": "hamza.sheikh",
+                "name": "Hamza Sheikh",
+                "email": "hamza.sheikh@example.com",
+                "role": "member",
+                "organizationId": null,
+                "department": "Civil Engineering",
+                "photoUrl": "https://i.pravatar.cc/300?img=9",
+                "phone": "+923001111119",
+                "isVerified": true,
+                "isActive": true
+            },
+            {
+                "_id": "6a634ff1653c02679df3cfc9",
+                "username": "guest5",
+                "name": "Iqra Guest",
+                "email": "guest5@example.com",
+                "role": "guest",
+                "organizationId": null,
+                "photoUrl": "https://i.pravatar.cc/300?img=17",
+                "phone": "+923001111127",
+                "isVerified": true,
+                "isActive": true
+            }]}}
+```
+# If user other than super_admin and space_admin try to run this:
+```json
+{
+    "success": false,
+    "error": {
+        "code": "FORBIDDEN",
+        "message": "You are not authorized to perform this action."
+    }
+}
+```
+
+## Query Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `search` | string | No | Search users by **name**, **email**, or **username** (case-insensitive). |
+| `role` | string | No | Filter users by role. Allowed values: `super_admin`, `space_admin`, `member`, `guest`. |
+| `isActive` | boolean | No | Filter users by account status (`true` or `false`). |
+
+---
+
+## Example Requests
+
+### 1. Get All Users
+
+```http
+GET /api/users
+```
+
+---
+
+### 2. Search Users
+
+Search by name, email, or username.
+
+```http
+GET /api/users?search=Ahmed
+```
+
+---
+
+### 3. Filter by Role
+
+```http
+GET /api/users?role=member
+```
+
+Other examples:
+
+```http
+GET /api/users?role=space_admin
+```
+
+```http
+GET /api/users?role=guest
+```
+
+```http
+GET /api/users?role=super_admin
+```
+
+---
+
+### 4. Filter Active Users
+
+```http
+GET /api/users?isActive=true
+```
+
+---
+
+### 5. Filter Inactive Users
+
+```http
+GET /api/users?isActive=false
+```
+
+---
+
+### 6. Search + Role
+
+```http
+GET /api/users?search=Ali&role=member
+```
+
+---
+
+### 7. Search + Active Status
+
+```http
+GET /api/users?search=Sara&isActive=true
+```
+
+---
+
+### 8. Role + Active Status
+
+```http
+GET /api/users?role=guest&isActive=true
+```
+
+---
+
+### 9. Search + Role + Active Status
+
+```http
+GET /api/users?search=Ahmed&role=space_admin&isActive=true
+```
+
+---
+
+## Successful Response
+
+**Status Code**
+
+```http
+200 OK
+```
+
+Example:
+
+```json
+{
+  "success": true,
+  "data": {
+    "users": [
+      {
+        "_id": "689f5c9b4e1c123456789abc",
+        "username": "ahmedkhan",
+        "name": "Ahmed Khan",
+        "email": "ahmed@example.com",
+        "role": "member",
+        "department": "Software Engineering",
+        "isVerified": true,
+        "isActive": true,
+        "organizationId": {
+          "_id": "689f5c9b4e1c987654321abc",
+          "name": "Tech Organization"
+        },
+        "createdAt": "2026-07-20T12:00:00.000Z",
+        "updatedAt": "2026-07-23T08:30:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+---
 ## Frontend Usage (PRD)
 
 Used in the **User Management** page where administrators can search, filter, and manage organization members.
@@ -168,7 +831,7 @@ Used in the **User Management** page where administrators can search, filter, an
 
 ## Notes
 
-- ✅ Nice filtering implementation with search, role, organization, and active status.
+
 
 ---
 
@@ -223,10 +886,6 @@ Used when an administrator opens a user's profile from the **User Management** p
 
 - User
 
-## Notes
-
-- ✅ Organization ownership check for Space Admin is a good security practice.
-
 ---
 
 # Controller: updateUserRole
@@ -274,6 +933,30 @@ Allows the Super Admin to change the role of a user within the organization.
 | 404 | User not found |
 | 422 | Invalid or missing role |
 | 500 | Internal server error |
+
+```json
+
+{
+    "success": true,
+    "data": {
+        "message": "User role updated successfully.",
+        "user": {
+            "_id": "6a634ff1653c02679df3cfc0",
+            "username": "maryam.asif",
+            "name": "Maryam Asif",
+            "email": "maryam.asif@example.com",
+            "role": "space_admin",
+            "organizationId": null,
+            "department": "Software Engineering",
+            "photoUrl": "https://i.pravatar.cc/300?img=8",
+            "phone": "+923001111118",
+            "isVerified": true,
+            "isActive": true,
+            "updatedAt": "2026-07-24T12:11:34.128Z"
+        }
+    }
+}
+```
 
 ## Frontend Usage (PRD)
 
@@ -414,12 +1097,10 @@ Used in the **Super Admin User Management** panel when an administrator wants to
 - ✅ Prevents deletion of Super Admin accounts.
 - ✅ Prevents users from deleting their own account.
 - ✅ Implements a soft delete by setting `isActive = false`, preserving historical data.
-- ⚠️ Consider changing the success message to **"User deactivated successfully."** since the record is not permanently removed from the database.
 
---------
-# Module 3: Organization Management
 
 ---
+# Module 3: Organization Management
 
 # Controller: createOrganization
 
@@ -485,24 +1166,25 @@ Content-Type: application/json
 
 ```json
 {
-  "success": true,
-  "data": {
-    "message": "Organization created successfully.",
-    "organization": {
-      "_id": "6875f9dc41b0c4b6fd8f3211",
-      "name": "FAST University",
-      "description": "Main Campus",
-      "address": "Islamabad",
-      "city": "Islamabad",
-      "country": "Pakistan",
-      "timezone": "Asia/Karachi",
-      "logoUrl": "https://example.com/logo.png",
-      "isActive": true,
-      "createdBy": "6875f0ab41b0c4b6fd8f1111",
-      "createdAt": "2026-07-23T12:15:00.000Z",
-      "updatedAt": "2026-07-23T12:15:00.000Z"
+    "success": true,
+    "data": {
+        "message": "Organization created successfully.",
+        "organization": {
+            "name": "FAST University",
+            "description": "Main Campus",
+            "address": "Islamabad",
+            "city": "Islamabad",
+            "country": "Pakistan",
+            "timezone": "Asia/Karachi",
+            "logoUrl": "https://example.com/logo.png",
+            "isActive": true,
+            "createdBy": "6a634ff1653c02679df3cfb9",
+            "_id": "6a635a0dd02da04a5da10f41",
+            "createdAt": "2026-07-24T12:26:53.964Z",
+            "updatedAt": "2026-07-24T12:26:53.964Z",
+            "__v": 0
+        }
     }
-  }
 }
 ```
 
@@ -946,246 +1628,6 @@ Used by the **Super Admin** to update organization details from the **Organizati
 - ✅ Stores update history in the Audit Log.
 - 💡 **Testing Role:** Super Admin.
 
-Module: Organization Management
-Controller: deleteOrganization
-Purpose
-
-Soft deletes an organization by marking it as inactive. An organization cannot be deleted if it still contains active users or active resources.
-
-Quick Reference
-Item	Value
-Module	Organization
-Controller	deleteOrganization
-Method	DELETE
-Endpoint	/api/organizations/:id
-Authentication	Yes
-Authorization	Super Admin
-Authentication & Authorization
-Middleware	Required
-Authentication (protect)	Yes
-Authorization (authorize)	Yes
-Allowed Roles
-✅ Super Admin
-❌ Space Admin
-❌ Member
-❌ Guest
-Request Fields
-
-No request body is required.
-
-Example Request
-DELETE /api/organizations/6875f9dc41b0c4b6fd8f3211
-Authorization: Bearer <SUPER_ADMIN_TOKEN>
-Example Responses
-✅ 200 OK
-{
-  "success": true,
-  "data": {
-    "message": "Organization deleted successfully."
-  }
-}
-Response Fields
-Field	Type	Description
-success	Boolean	Indicates request completed successfully.
-data.message	String	Confirmation message.
-❌ 400 Invalid Organization ID
-{
-  "success": false,
-  "error": {
-    "code": "INVALID_ID",
-    "message": "Invalid organization id."
-  }
-}
-❌ 400 Organization Not Empty
-{
-  "success": false,
-  "error": {
-    "code": "ORGANIZATION_NOT_EMPTY",
-    "message": "Cannot delete organization because it still contains active users or resources."
-  }
-}
-❌ 401 Unauthorized
-{
-  "success": false,
-  "error": {
-    "code": "UNAUTHENTICATED",
-    "message": "Authentication required."
-  }
-}
-❌ 403 Forbidden
-{
-  "success": false,
-  "error": {
-    "code": "FORBIDDEN",
-    "message": "You are not authorized to perform this action."
-  }
-}
-❌ 404 Organization Not Found
-{
-  "success": false,
-  "error": {
-    "code": "ORGANIZATION_NOT_FOUND",
-    "message": "Organization not found."
-  }
-}
-❌ 500 Internal Server Error
-{
-  "success": false,
-  "error": {
-    "code": "INTERNAL_SERVER_ERROR",
-    "message": "Something went wrong."
-  }
-}
-Frontend Usage (According to PRD)
-
-Used on the Organization Management page when the Super Admin removes an organization. Before allowing deletion, the frontend should inform the administrator that organizations with active users or resources cannot be deleted.
-
-Models Used
-Organization
-User
-Resource
-AuditLog
-Notes
-✅ Soft delete (isActive = false).
-✅ Prevents deleting organizations containing active users or resources.
-✅ Action recorded in Audit Log.
-💡 Testing Role: Super Admin.
-Module: Organization Management
-Controller: assignSpaceAdmin
-Purpose
-
-Assigns a verified user as the Space Admin of an organization. The selected user is linked to the organization and their role is updated to space_admin.
-
-Quick Reference
-Item	Value
-Module	Organization
-Controller	assignSpaceAdmin
-Method	POST
-Endpoint	/api/organizations/:id/space-admin
-Authentication	Yes
-Authorization	Super Admin
-Authentication & Authorization
-Middleware	Required
-Authentication (protect)	Yes
-Authorization (authorize)	Yes
-Allowed Roles
-✅ Super Admin
-❌ Space Admin
-❌ Member
-❌ Guest
-Request Fields
-Field	Type	Required	Description
-userId	ObjectId	✅ Yes	User to be assigned as Space Admin.
-Example Request
-POST /api/organizations/6875f9dc41b0c4b6fd8f3211/space-admin
-Authorization: Bearer <SUPER_ADMIN_TOKEN>
-Content-Type: application/json
-{
-  "userId": "6875e1d8f0c7d3a8d9f12345"
-}
-Example Responses
-✅ 200 OK
-{
-  "success": true,
-  "data": {
-    "message": "Space Admin assigned successfully.",
-    "user": {
-      "_id": "6875e1d8f0c7d3a8d9f12345",
-      "name": "Ali Khan",
-      "email": "ali@example.com",
-      "role": "space_admin",
-      "organizationId": "6875f9dc41b0c4b6fd8f3211",
-      "isVerified": true,
-      "isActive": true
-    }
-  }
-}
-Response Fields
-Field	Type	Description
-success	Boolean	Request status.
-data.message	String	Success message.
-data.user	Object	Updated user details.
-data.user.role	String	Updated role (space_admin).
-data.user.organizationId	String	Assigned organization ID.
-❌ 400 Invalid ID
-{
-  "success": false,
-  "error": {
-    "code": "INVALID_ID",
-    "message": "Invalid organization id."
-  }
-}
-❌ 400 User Not Verified
-{
-  "success": false,
-  "error": {
-    "code": "USER_NOT_VERIFIED",
-    "message": "User must verify the account before becoming Space Admin."
-  }
-}
-❌ 400 User Already Assigned
-{
-  "success": false,
-  "error": {
-    "code": "USER_ALREADY_ASSIGNED",
-    "message": "User already belongs to another organization."
-  }
-}
-❌ 401 Unauthorized
-{
-  "success": false,
-  "error": {
-    "code": "UNAUTHENTICATED",
-    "message": "Authentication required."
-  }
-}
-❌ 403 Forbidden
-{
-  "success": false,
-  "error": {
-    "code": "FORBIDDEN",
-    "message": "You are not authorized to perform this action."
-  }
-}
-❌ 404 Organization Not Found
-{
-  "success": false,
-  "error": {
-    "code": "ORGANIZATION_NOT_FOUND",
-    "message": "Organization not found."
-  }
-}
-❌ 404 User Not Found
-{
-  "success": false,
-  "error": {
-    "code": "USER_NOT_FOUND",
-    "message": "User not found."
-  }
-}
-❌ 500 Internal Server Error
-{
-  "success": false,
-  "error": {
-    "code": "INTERNAL_SERVER_ERROR",
-    "message": "Something went wrong."
-  }
-}
-Frontend Usage (According to PRD)
-
-After creating an organization, the Super Admin uses this API from the Organization Management page to assign a verified user as the Space Admin. Once assigned, the user gains permission to manage resources, bookings, calendars, and members for that organization.
-
-Models Used
-Organization
-User
-Notes
-✅ Only verified users can become Space Admins.
-✅ Prevents assigning users already linked to another organization.
-⚠️ Suggestion: Unlike the other organization actions, this controller does not create an AuditLog. For consistency, consider logging this action as well. It would improve auditability of administrative changes.
-💡 Testing Role: Super Admin only.
-
----
-
 # Controller: deleteOrganization
 
 ## Purpose
@@ -1527,16 +1969,16 @@ After creating an organization, the **Super Admin** uses this API from the **Org
 
 - Organization
 - User
+-AuditLog
 
 ## Notes
 
 - ✅ Only verified users can become Space Admins.
 - ✅ Prevents assigning users already linked to another organization.
-- ⚠️ Unlike the other organization actions, this controller does not create an `AuditLog`. For consistency, consider logging this action as well to improve auditability of administrative changes.
 - 💡 **Testing Role:** Super Admin only.
+---
 
 # Module 4: Resource Management
-
 ---
 
 # Controller: createResource
@@ -1702,12 +2144,9 @@ Used by the **Space Admin** from the **Resource Management** page to create reso
 - Resource
 - User
 - AuditLog
+- AccessGroup
 
-## Backend Review
 
-- ✅ Good duplicate name check.
-- ⚠️ `accessGroupId` is not validated before assigning it.
-- ⚠️ `type` is not explicitly validated against the allowed enum before saving (although Mongoose will reject invalid values).
 
 ---
 
@@ -1820,18 +2259,14 @@ This API powers the **Browse Resources** page. Members, Guests, and Space Admins
 
 - Resource
 - User
-
 ---
-
-# Module 4: Resource Management
-
----
-
 # Controller: getResourceById
 
 ## Purpose
 
-Retrieves complete details of a single resource.
+Retrieves the complete details of a specific resource.
+
+For security, this endpoint only allows users to view resources that belong to their own organization. Super Admins can view resources from any organization.
 
 ## Quick Reference
 
@@ -1840,7 +2275,7 @@ Retrieves complete details of a single resource.
 | HTTP Method | GET |
 | Endpoint | `/api/resources/:id` |
 | Authentication | Yes |
-| Authorization | No |
+| Authorization | Organization-level access control |
 | Allowed Roles | Super Admin, Space Admin, Member, Guest |
 
 ## Authentication & Authorization
@@ -1857,11 +2292,24 @@ Retrieves complete details of a single resource.
 - ✅ Member
 - ✅ Guest
 
+### Access Rules
+
+- **Super Admin:** Can retrieve any resource.
+- **Space Admin:** Can retrieve resources belonging to their organization only.
+- **Member:** Can retrieve resources belonging to their organization only.
+- **Guest:** Can retrieve resources belonging to their organization only.
+
+If a user attempts to access a resource belonging to another organization, the request is rejected with **403 Forbidden**.
+
+---
+
 ## Request Fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `id` (URL Param) | ObjectId | ✅ Yes | Resource ID |
+| `id` (URL Parameter) | ObjectId | ✅ Yes | Resource ID |
+
+---
 
 ## Example Request
 
@@ -1869,6 +2317,8 @@ Retrieves complete details of a single resource.
 GET /api/resources/685bc7e2a4d25c2c95f73d10
 Authorization: Bearer <TOKEN>
 ```
+
+---
 
 ## Example Responses
 
@@ -1925,18 +2375,6 @@ Authorization: Bearer <TOKEN>
 }
 ```
 
-### ❌ 404 Not Found
-
-```json
-{
-  "success": false,
-  "error": {
-    "code": "RESOURCE_NOT_FOUND",
-    "message": "Resource not found."
-  }
-}
-```
-
 ### ❌ 401 Unauthorized
 
 ```json
@@ -1949,19 +2387,68 @@ Authorization: Bearer <TOKEN>
 }
 ```
 
+### ❌ 403 Forbidden
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "FORBIDDEN",
+    "message": "You are not authorized to access this resource."
+  }
+}
+```
+
+### ❌ 404 Not Found
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "RESOURCE_NOT_FOUND",
+    "message": "Resource not found."
+  }
+}
+```
+
+---
+
 ## Frontend Usage (According to PRD)
 
-This API is used when a user opens a specific resource to view its complete information before creating a booking or checking availability.
+This API is called when a user selects a resource from the resource listing to view its complete information before:
+
+- Creating a booking
+- Viewing resource details
+- Checking resource capacity
+- Viewing available amenities
+- Determining whether approval is required
+- Displaying the assigned access group
+
+The frontend should only request resources that belong to the currently logged-in user's organization. If the backend returns **403 Forbidden**, the frontend should redirect the user or display an authorization error message.
+
+---
 
 ## Models Used
 
 - Resource
+- User
+- Organization
+- AccessGroup
+
+---
 
 ## Backend Review
 
-- ✅ Retrieves populated organization, creator, and access group information.
-- ⚠️ **Recommendation:** Verify that the logged-in user belongs to the same organization before returning the resource. Currently, any authenticated user with a valid resource ID can access another organization's resource.
+- Validates the Resource ID.
+- Retrieves populated organization, creator, and access group information.
+- Returns a 404 error if the resource does not exist.
+- Restricts access based on organization membership.
+- Allows Super Admin to access resources across all organizations.
 
+### Security
+
+- Prevents authenticated users from viewing resources belonging to another organization.
+- Enforces organization-level data isolation, ensuring users only access resources they are authorized to view.
 ---
 
 # Controller: updateResource
@@ -1970,6 +2457,10 @@ This API is used when a user opens a specific resource to view its complete info
 
 Updates the details of an existing resource.
 
+This endpoint allows a **Space Admin** to modify resource information such as its name, type, location, capacity, amenities, approval requirement, buffer time, and assigned access group. Before updating, the backend validates the input data and ensures the resource belongs to the Space Admin's organization.
+
+---
+
 ## Quick Reference
 
 | Item | Value |
@@ -1977,8 +2468,10 @@ Updates the details of an existing resource.
 | HTTP Method | PATCH |
 | Endpoint | `/api/resources/:id` |
 | Authentication | Yes |
-| Authorization | Yes |
+| Authorization | Yes (Organization Ownership Verification) |
 | Allowed Roles | Space Admin |
+
+---
 
 ## Authentication & Authorization
 
@@ -1994,20 +2487,24 @@ Updates the details of an existing resource.
 - ❌ Member
 - ❌ Guest
 
+---
+
 ## Request Fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `name` | String | ❌ No | Resource name |
-| `type` | Enum | ❌ No | Resource type |
-| `building` | String | ❌ No | Building |
-| `location` | String | ❌ No | Location |
-| `capacity` | Number | ❌ No | Capacity |
-| `amenities` | Array | ❌ No | Resource amenities |
-| `photoUrl` | String | ❌ No | Image URL |
-| `requiresApproval` | Boolean | ❌ No | Approval required |
-| `bufferTime` | Number | ❌ No | Buffer time |
-| `accessGroupId` | ObjectId | ❌ No | Access Group ID |
+| `name` | String | ❌ No | Updated resource name |
+| `type` | Enum | ❌ No | Resource type (`room`, `lab`, `desk`, `equipment`, `vehicle`, `court`, `other`) |
+| `building` | String | ❌ No | Building name |
+| `location` | String | ❌ No | Resource location |
+| `capacity` | Number | ❌ No | Capacity (minimum value: **1**) |
+| `amenities` | String[] | ❌ No | List of available amenities |
+| `photoUrl` | String | ❌ No | Resource image URL |
+| `requiresApproval` | Boolean | ❌ No | Whether bookings require approval |
+| `bufferTime` | Number | ❌ No | Buffer time (minutes) between bookings |
+| `accessGroupId` | ObjectId | ❌ No | Access Group assigned to the resource |
+
+---
 
 ## Example Request
 
@@ -2020,9 +2517,12 @@ Authorization: Bearer <SPACE_ADMIN_TOKEN>
 {
   "capacity": 30,
   "location": "Second Floor",
-  "requiresApproval": false
+  "requiresApproval": false,
+  "accessGroupId": "685bc7e2a4d25c2c95f74111"
 }
 ```
+
+---
 
 ## Example Responses
 
@@ -2035,9 +2535,11 @@ Authorization: Bearer <SPACE_ADMIN_TOKEN>
     "message": "Resource updated successfully.",
     "resource": {
       "_id": "685bc7e2a4d25c2c95f73d10",
+      "name": "Conference Room A",
       "capacity": 30,
       "location": "Second Floor",
-      "requiresApproval": false
+      "requiresApproval": false,
+      "accessGroupId": "685bc7e2a4d25c2c95f74111"
     }
   }
 }
@@ -2055,6 +2557,20 @@ Authorization: Bearer <SPACE_ADMIN_TOKEN>
 }
 ```
 
+or
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_ID",
+    "message": "Invalid access group id."
+  }
+}
+```
+
+---
+
 ### ❌ 403 Forbidden
 
 ```json
@@ -2066,6 +2582,8 @@ Authorization: Bearer <SPACE_ADMIN_TOKEN>
   }
 }
 ```
+
+---
 
 ### ❌ 404 Not Found
 
@@ -2079,21 +2597,93 @@ Authorization: Bearer <SPACE_ADMIN_TOKEN>
 }
 ```
 
+or
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "ACCESS_GROUP_NOT_FOUND",
+    "message": "Access group not found."
+  }
+}
+```
+
+---
+
+### ❌ 422 Unprocessable Entity
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Invalid resource type."
+  }
+}
+```
+
+or
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Capacity must be at least 1."
+  }
+}
+```
+
+---
+
 ## Frontend Usage (According to PRD)
 
-Used from the **Edit Resource** screen where the Space Admin updates information such as capacity, location, amenities, approval requirement, or access group.
+This endpoint is used from the **Edit Resource** page.
+
+The frontend allows a Space Admin to update resource information such as:
+
+- Resource name
+- Resource type
+- Building and location
+- Capacity
+- Amenities
+- Resource image
+- Booking approval requirement
+- Buffer time
+- Assigned Access Group
+
+The frontend should only display Access Groups belonging to the current organization when selecting a new access group.
+
+---
 
 ## Models Used
 
 - Resource
 - User
+- AccessGroup
 - AuditLog
+
+---
 
 ## Backend Review
 
-- ✅ Proper ownership verification is implemented.
-- ⚠️ Consider validating the updated `type`, `capacity`, and `accessGroupId` values before saving to prevent invalid data.
+- Validates the Resource ID.
+- Verifies that the logged-in user exists.
+- Ensures the resource belongs to the Space Admin's organization.
+- Validates the resource type before updating.
+- Ensures capacity is greater than or equal to **1**.
+- Validates the Access Group ID.
+- Confirms the Access Group belongs to the same organization.
+- Records every successful update in the Audit Log.
+- Returns the updated resource after saving.
 
+### Security
+
+- Prevents Space Admins from updating resources belonging to another organization.
+- Prevents assigning resources to invalid or external Access Groups.
+- Prevents invalid resource types and capacities from being stored in the database.
+- Maintains an audit trail of all resource update operations for accountability.
 ---
 
 # Controller: updateResourceStatus
@@ -2246,7 +2836,16 @@ This API is used when the **Space Admin** enables or disables a resource from th
 
 ## Purpose
 
-Soft deletes a resource by marking it as inactive instead of permanently removing it.
+Soft deletes a resource by marking it as **inactive** (`isActive = false`) instead of permanently removing it from the database.
+
+Before deleting the resource, the backend verifies that:
+- The resource exists.
+- The logged-in Space Admin belongs to the same organization.
+- The resource has **no active or upcoming bookings**.
+
+This prevents accidental deletion of resources that are still reserved and preserves historical booking data.
+
+---
 
 ## Quick Reference
 
@@ -2255,8 +2854,10 @@ Soft deletes a resource by marking it as inactive instead of permanently removin
 | HTTP Method | DELETE |
 | Endpoint | `/api/resources/:id` |
 | Authentication | Yes |
-| Authorization | Yes |
+| Authorization | Yes (Organization Ownership Verification) |
 | Allowed Roles | Space Admin |
+
+---
 
 ## Authentication & Authorization
 
@@ -2272,11 +2873,15 @@ Soft deletes a resource by marking it as inactive instead of permanently removin
 - ❌ Member
 - ❌ Guest
 
+---
+
 ## Request Fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `id` (URL Param) | ObjectId | ✅ Yes | Resource ID |
+| `id` (URL Parameter) | ObjectId | ✅ Yes | Resource ID |
+
+---
 
 ## Example Request
 
@@ -2284,6 +2889,8 @@ Soft deletes a resource by marking it as inactive instead of permanently removin
 DELETE /api/resources/685bc7e2a4d25c2c95f73d10
 Authorization: Bearer <SPACE_ADMIN_TOKEN>
 ```
+
+---
 
 ## Example Responses
 
@@ -2298,6 +2905,8 @@ Authorization: Bearer <SPACE_ADMIN_TOKEN>
 }
 ```
 
+---
+
 ### ❌ 400 Bad Request
 
 ```json
@@ -2309,6 +2918,20 @@ Authorization: Bearer <SPACE_ADMIN_TOKEN>
   }
 }
 ```
+
+or
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "RESOURCE_HAS_ACTIVE_BOOKINGS",
+    "message": "Resource has active or upcoming bookings and cannot be deleted."
+  }
+}
+```
+
+---
 
 ### ❌ 401 Unauthorized
 
@@ -2322,6 +2945,8 @@ Authorization: Bearer <SPACE_ADMIN_TOKEN>
 }
 ```
 
+---
+
 ### ❌ 403 Forbidden
 
 ```json
@@ -2333,6 +2958,8 @@ Authorization: Bearer <SPACE_ADMIN_TOKEN>
   }
 }
 ```
+
+---
 
 ### ❌ 404 Not Found
 
@@ -2346,23 +2973,49 @@ Authorization: Bearer <SPACE_ADMIN_TOKEN>
 }
 ```
 
+---
+
 ## Frontend Usage (According to PRD)
 
-This API is used from the **Delete Resource** action in the **Resource Management** module. The resource is not permanently removed from the database; instead, it is marked as inactive so it no longer appears in the list of available resources for booking.
+This API is used from the **Delete Resource** action in the **Resource Management** module.
+
+When a Space Admin chooses to delete a resource:
+
+1. The frontend sends the Resource ID to this endpoint.
+2. The backend checks whether the resource has any active or upcoming bookings.
+3. If future bookings exist, the deletion is rejected and the frontend should display the returned error message.
+4. Otherwise, the resource is **soft deleted** by setting `isActive = false`.
+
+Since the resource is not permanently removed, historical bookings, reports, and audit logs remain intact.
+
+---
 
 ## Models Used
 
 - Resource
 - User
+- Booking
 - AuditLog
+---
 
 ## Backend Review
 
-- ✅ Uses soft delete (`isActive = false`), preserving historical data.
-- ✅ Ensures only the Space Admin of the same organization can delete the resource.
-- ✅ Creates an audit log for traceability.
-- 💡 **Recommended Improvement:** Before allowing deletion, check whether the resource has any future bookings. If bookings exist, return an error (e.g., `RESOURCE_HAS_ACTIVE_BOOKINGS`) to avoid orphaned bookings and maintain data integrity.
+- Validates the Resource ID.
+- Verifies the authenticated user.
+- Ensures the resource exists.
+- Restricts deletion to the Space Admin of the same organization.
+- Prevents deletion when active or upcoming bookings exist.
+- Performs a soft delete by setting `isActive = false`.
+- Records the deletion in the Audit Log for traceability.
 
+### Security
+
+- Prevents unauthorized users from deleting resources belonging to another organization.
+- Preserves historical booking data by using soft deletion.
+- Prevents orphaned bookings by blocking deletion of resources that still have active or upcoming reservations.
+- Maintains a complete audit trail of resource deletion operations.
+```
+---
 # Module 5: Booking Management
 
 ## Module Overview
@@ -5046,24 +5699,13 @@ This API is used from the **Access Group Management** page when an administrator
 
 ## Backend Review
 
-### ✅ Strengths
-
 - Prevents duplicate access group names within the same organization.
 - Restricts management operations to Super Admins and Space Admins.
 - Prevents duplicate users from being added to the same group.
 - Prevents deletion of access groups that are still assigned to resources.
 - Maintains organization-level separation of access groups.
 
-### 💡 Suggested Improvements
-
-- Record all create, update, add user, remove user, and delete operations in the **Audit Log** for better traceability.
-- Validate that users being added belong to the same organization as the access group.
-- Return the updated access group object after add/remove operations instead of an empty object (`{}`) for a better frontend experience.
-- Consider supporting pagination and search for organizations with a large number of access groups.
-
 # Extra Info About Access Group Management
-
-## Additional Notes
 
 ### What is the Access Group Module?
 
@@ -5240,524 +5882,9 @@ This design:
 - Ensures resources are only accessible to authorized users
 - Aligns with the access control requirements defined in the PRD
 ----------
-# Module 9: Calendar Integration
 
-## Module Overview
 
-The **Calendar Integration Module** allows users to connect their personal calendars, such as **Google Calendar** or **Microsoft Outlook Calendar**, with the Resource Booking Platform.
-
-Many users already manage their meetings, classes, appointments, and personal schedules through external calendar applications. If bookings only existed inside the Resource Booking Platform, users would need to switch between multiple applications to manage their schedules.
-
-By connecting an external calendar, bookings created within the Resource Booking Platform can later be synchronized with the user's personal calendar, allowing all events to appear in one centralized location.
-
----
-
-## Purpose of the Calendar Module
-
-The Calendar Integration Module is responsible for:
-
-- Connecting a user's **Google Calendar**.
-- Connecting a user's **Microsoft Outlook Calendar**.
-- Securely storing OAuth authentication tokens.
-- Updating expired access tokens when necessary.
-- Disconnecting connected calendar accounts.
-- Managing the calendar connection status for each user.
-
-> **Note:** This module **does not create bookings**.
-
-The **Booking Module** is solely responsible for creating, updating, and managing bookings.
-
-The **Calendar Integration Module** only manages the connection between the Resource Booking Platform and external calendar providers.
-
----
-
-## Relationship with the Booking Module
-
-The interaction between the Booking Module and the Calendar Integration Module follows this workflow:
-
-```text
-User selects date and time
-        │
-        ▼
-Booking Module creates booking
-        │
-        ▼
-Calendar Module checks whether
-Google Calendar or Outlook
-is connected
-        │
-        ▼
-Future synchronization creates
-an event inside Google Calendar
-or Microsoft Outlook
-```
-
-The Calendar Integration Module works as a supporting component for the Booking Module. After a booking is successfully created, the platform can determine whether the user has connected an external calendar. If a connection exists, the booking can later be synchronized as an event in the user's Google Calendar or Microsoft Outlook Calendar, ensuring that all scheduled activities are available in a single calendar application.
-The **Calendar Integration Module** allows users to connect their external calendar accounts (Google Calendar or Microsoft Outlook) with the Resource Booking Platform. Once connected, the platform can synchronize bookings with the user's calendar, helping users manage their schedules more efficiently.
-
-### Models Used
-
-| Model | Purpose |
-|--------|---------|
-| CalendarIntegration | Stores connected calendar provider, authentication tokens, connection status, and synchronization information. |
-| User | Identifies the owner of the calendar integration. |
-
----
-
-# Controller: connectCalendar
-
-## Purpose
-
-Connects a user's Google or Outlook calendar to the Resource Booking Platform. The controller stores the selected calendar provider along with the OAuth authentication tokens required for future synchronization.
-
-### Quick Reference
-
-| Item | Value |
-|------|-------|
-| Module | Calendar Integration |
-| Controller | connectCalendar |
-| HTTP Method | POST |
-| Endpoint | `/api/calendar` |
-| Authentication | Yes |
-| Authorization | No |
-| Allowed Roles | Super Admin, Space Admin, Member, Guest |
-
----
-
-## Request Fields
-
-| Field | Type | Required | Description |
-|------|------|----------|-------------|
-| provider | String | ✅ Yes | Calendar provider (`google` or `outlook`) |
-| accessToken | String | ✅ Yes | OAuth access token |
-| refreshToken | String | ❌ No | OAuth refresh token |
-| expiryDate | Date | ❌ No | Token expiry date |
-
----
-
-## Example Request
-
-```http
-POST /api/calendar
-Authorization: Bearer <TOKEN>
-```
-
-```json
-{
-  "provider": "google",
-  "accessToken": "ya29.a0AfH6S...",
-  "refreshToken": "1//04xyz...",
-  "expiryDate": "2026-08-01T12:00:00.000Z"
-}
-```
-
----
-
-## Example Responses
-
-### ✅ 201 Created
-
-```json
-{
-  "success": true,
-  "message": "Calendar connected successfully.",
-  "integration": {
-    "_id": "685abc1234567890abcdef11",
-    "userId": "685abc1234567890abcdef22",
-    "provider": "google",
-    "accessToken": "ya29.a0AfH6S...",
-    "refreshToken": "1//04xyz...",
-    "expiryDate": "2026-08-01T12:00:00.000Z",
-    "isConnected": true
-  }
-}
-```
-
-### ❌ 404 Not Found
-
-```json
-{
-  "success": false,
-  "message": "User not found.",
-  "code": "USER_NOT_FOUND"
-}
-```
-
-### ❌ 409 Conflict
-
-```json
-{
-  "success": false,
-  "message": "Calendar already connected.",
-  "code": "CALENDAR_ALREADY_CONNECTED"
-}
-```
-
-### ❌ 422 Validation Error
-
-```json
-{
-  "success": false,
-  "message": "Provider and access token are required.",
-  "code": "VALIDATION_ERROR"
-}
-```
-
----
-
-## Frontend Usage
-
-Used from the **Calendar Integration** page when a user connects their Google or Outlook calendar after completing the OAuth authentication process.
-
----
-
-## Models Used
-
-- CalendarIntegration
-- User
-
----
-
-## Backend Review
-
-✅ Prevents duplicate calendar connections.
-
-✅ Stores provider information and authentication tokens for future synchronization.
-
-💡 **Recommendation:** Encrypt access and refresh tokens before storing them in the database for improved security.
-
----
-
-# Controller: getCalendarIntegration
-
-## Purpose
-
-Retrieves all calendar integrations connected to the currently logged-in user.
-
-### Quick Reference
-
-| Item | Value |
-|------|-------|
-| Module | Calendar Integration |
-| Controller | getCalendarIntegration |
-| HTTP Method | GET |
-| Endpoint | `/api/calendar` |
-| Authentication | Yes |
-| Authorization | No |
-| Allowed Roles | Super Admin, Space Admin, Member, Guest |
-
----
-
-## Request Fields
-
-No request body is required.
-
----
-
-## Example Request
-
-```http
-GET /api/calendar
-Authorization: Bearer <TOKEN>
-```
-
----
-
-## Example Responses
-
-### ✅ 200 OK
-
-```json
-{
-  "success": true,
-  "integrations": [
-    {
-      "_id": "685abc1234567890abcdef11",
-      "provider": "google",
-      "isConnected": true,
-      "expiryDate": "2026-08-01T12:00:00.000Z"
-    },
-    {
-      "_id": "685abc1234567890abcdef22",
-      "provider": "outlook",
-      "isConnected": false
-    }
-  ]
-}
-```
-
-### ❌ 401 Unauthorized
-
-```json
-{
-  "success": false,
-  "message": "Authentication required."
-}
-```
-
----
-
-## Frontend Usage
-
-Used when opening the **Calendar Integration** settings page to display all connected calendar accounts and their connection status.
-
----
-
-## Models Used
-
-- CalendarIntegration
-
----
-
-## Backend Review
-
-✅ Returns all integrations belonging to the logged-in user only.
-
-💡 **Recommendation:** Consider hiding sensitive token-related fields from API responses.
-
----
-
-# Controller: updateCalendarIntegration
-
-## Purpose
-
-Updates the authentication tokens or connection status of an existing calendar integration.
-
-### Quick Reference
-
-| Item | Value |
-|------|-------|
-| Module | Calendar Integration |
-| Controller | updateCalendarIntegration |
-| HTTP Method | PATCH |
-| Endpoint | `/api/calendar` |
-| Authentication | Yes |
-| Authorization | No |
-| Allowed Roles | Super Admin, Space Admin, Member, Guest |
-
----
-
-## Request Fields
-
-| Field | Type | Required | Description |
-|------|------|----------|-------------|
-| provider | String | ✅ Yes | Calendar provider |
-| accessToken | String | ❌ No | Updated access token |
-| refreshToken | String | ❌ No | Updated refresh token |
-| expiryDate | Date | ❌ No | Updated expiry date |
-| isConnected | Boolean | ❌ No | Connection status |
-
----
-
-## Example Request
-
-```http
-PATCH /api/calendar
-Authorization: Bearer <TOKEN>
-```
-
-```json
-{
-  "provider": "google",
-  "accessToken": "new_access_token",
-  "refreshToken": "new_refresh_token",
-  "expiryDate": "2026-09-01T12:00:00.000Z",
-  "isConnected": true
-}
-```
-
----
-
-## Example Responses
-
-### ✅ 200 OK
-
-```json
-{
-  "success": true,
-  "message": "Calendar integration updated successfully.",
-  "integration": {
-    "_id": "685abc1234567890abcdef11",
-    "provider": "google",
-    "isConnected": true
-  }
-}
-```
-
-### ❌ 404 Not Found
-
-```json
-{
-  "success": false,
-  "message": "Calendar integration not found.",
-  "code": "CALENDAR_NOT_FOUND"
-}
-```
-
-### ❌ 422 Validation Error
-
-```json
-{
-  "success": false,
-  "message": "Provider is required.",
-  "code": "VALIDATION_ERROR"
-}
-```
-
----
-
-## Frontend Usage
-
-Used after token refresh or when reconnecting an existing calendar account to keep the integration active.
-
----
-
-## Models Used
-
-- CalendarIntegration
-
----
-
-## Backend Review
-
-✅ Allows updating tokens without creating duplicate integrations.
-
-💡 **Recommendation:** Validate supported provider values (`google` or `outlook`) before updating.
-
----
-
-# Controller: disconnectCalendar
-
-## Purpose
-
-Disconnects a user's calendar integration by marking it as disconnected while preserving the integration record for future reconnection.
-
-### Quick Reference
-
-| Item | Value |
-|------|-------|
-| Module | Calendar Integration |
-| Controller | disconnectCalendar |
-| HTTP Method | DELETE |
-| Endpoint | `/api/calendar` |
-| Authentication | Yes |
-| Authorization | No |
-| Allowed Roles | Super Admin, Space Admin, Member, Guest |
-
----
-
-## Request Fields
-
-| Field | Type | Required | Description |
-|------|------|----------|-------------|
-| provider | String | ✅ Yes | Calendar provider to disconnect |
-
----
-
-## Example Request
-
-```http
-DELETE /api/calendar
-Authorization: Bearer <TOKEN>
-```
-
-```json
-{
-  "provider": "google"
-}
-```
-
----
-
-## Example Responses
-
-### ✅ 200 OK
-
-```json
-{
-  "success": true,
-  "message": "Calendar disconnected successfully."
-}
-```
-
-### ❌ 404 Not Found
-
-```json
-{
-  "success": false,
-  "message": "Calendar integration not found.",
-  "code": "CALENDAR_NOT_FOUND"
-}
-```
-
-### ❌ 422 Validation Error
-
-```json
-{
-  "success": false,
-  "message": "Provider is required.",
-  "code": "VALIDATION_ERROR"
-}
-```
-
----
-
-## Frontend Usage
-
-Used when a user disconnects their Google or Outlook calendar from the **Calendar Integration Settings** page.
-
----
-
-## Models Used
-
-- CalendarIntegration
-
----
-
-## Backend Review
-
-✅ Preserves integration history by marking the calendar as disconnected instead of deleting the record.
-
-💡 **Recommendation:** Consider revoking the OAuth access token from the external calendar provider during disconnection to improve security and prevent unauthorized future access.
-
-## Recommendation for Frontend Developers
-
-When integrating the **Calendar Integration Module**, treat it as a **Profile/Settings** feature rather than part of the booking workflow.
-
-### Recommended User Flow
-
-```text
-User opens Profile / Settings
-            │
-            ▼
-Connects Google Calendar
-or Microsoft Outlook
-            │
-            ▼
-Connection status is saved
-and displayed in the UI
-            │
-            ▼
-User creates bookings normally
-through the Booking Module
-            │
-            ▼
-Future versions automatically
-synchronize bookings with the
-connected calendar
-```
-
-### Implementation Notes
-
-- Users should connect their **Google Calendar** or **Microsoft Outlook Calendar** only once from the **Profile** or **Settings** page.
-- The frontend should display the current connection status (Connected or Disconnected) for each supported calendar provider.
-- The booking workflow should remain completely independent of the calendar integration.
-- When a user creates or updates a booking, no additional calendar-related input should be required.
-- In future versions, the backend can automatically synchronize bookings with the connected external calendar without requiring any changes to the booking interface.
-
-This separation of responsibilities keeps the booking process simple while making it easy to introduce automatic calendar synchronization as the platform evolves.
-
-# Module 10: Analytics & Dashboard
+# Module 9: Analytics & Dashboard
 
 ## Module Overview
 
@@ -5966,7 +6093,7 @@ This ensures that a Space Admin cannot view analytics belonging to another organ
 💡 **Recommendation:** Consider adding analytics for resource utilization, peak booking hours, booking trends, and monthly booking summaries to provide more detailed operational insights in future versions.
 
 
-# Module 11 – Audit Log Module
+# Module 10 – Audit Log Module
 
 ## Module Overview
 
@@ -6186,7 +6313,6 @@ This API is used when an administrator opens a specific audit log from the Audit
 
 ✅ Restricts access to administrators only.
 
-💡 Recommended Improvement: Add pagination, date range filters, and sorting to improve performance when the number of audit logs grows large.
 
 
 # Resource Booking Platform – Backend Modules
@@ -6249,13 +6375,10 @@ Delivers notifications related to bookings, approvals, reminders, check-ins, and
 ### 8. Access Group Module
 Implements role-based resource access by grouping users and assigning resources to those groups instead of individual users.
 
-### 9. Calendar Integration Module
-Manages connections with Google Calendar and Microsoft Outlook so bookings can be synchronized with external calendars in future versions.
-
-### 10. Analytics Module
+### 9. Analytics Module
 Aggregates statistical information from multiple collections to provide dashboard metrics for administrators using a single optimized API request.
 
-### 11. Audit Log Module
+### 10. Audit Log Module
 Maintains a complete history of important system activities, providing administrators with auditing, monitoring, and traceability capabilities.
 
 ---
@@ -6469,30 +6592,9 @@ Mark As Read
        ▼
 Delete (Optional)
 ```
-
 ---
 
-# 6. Calendar Integration Workflow
-
-```text
-User
- │
- ▼
-Connect Google / Outlook
- │
- ▼
-Calendar Credentials Stored
- │
- ▼
-User Can Update Connection
- │
- ▼
-User Can Disconnect Calendar
-```
-
----
-
-# 7. Analytics Workflow
+# 6. Analytics Workflow
 
 ```text
 Analytics Request
@@ -6533,7 +6635,7 @@ Return Dashboard Statistics
 
 ---
 
-# 8. Audit Log Workflow
+# 7. Audit Log Workflow
 
 ```text
 Any Important Action
@@ -6562,7 +6664,7 @@ Administrator Views Audit History
 
 ---
 
-# 9. Overall System Architecture
+# 8. Overall System Architecture
 
 ```text
                      Authentication
@@ -6588,9 +6690,6 @@ Administrator Views Audit History
               Notification Module
                       │
                       ▼
-          Calendar Integration Module
-                      │
-                      ▼
               Analytics Dashboard
                       │
                       ▼
@@ -6614,9 +6713,8 @@ Administrator Views Audit History
 | 6 | Booking Module |
 | 7 | Approval Module |
 | 8 | Notification Module |
-| 9 | Calendar Integration Module |
-| 10 | Analytics Module |
-| 11 | Audit Log Module |
+| 9 | Analytics Module |
+| 10 | Audit Log Module |
 
 ---
 

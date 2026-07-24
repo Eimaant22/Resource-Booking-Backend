@@ -97,8 +97,7 @@ const UserSchema = new Schema<IUser>(
   }
 );
 
-UserSchema.index({ email: 1 });
-UserSchema.index({ username: 1 });
+
 UserSchema.index({ organizationId: 1 });
 UserSchema.index({ role: 1 });
 

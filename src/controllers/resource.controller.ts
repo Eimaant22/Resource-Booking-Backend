@@ -4,10 +4,12 @@ import mongoose from 'mongoose';
 import Resource from '../models/Resource';
 import User from '../models/User';
 import AuditLog from '../models/AuditLog';
+import Booking from '../models/Booking';
 
 import AppError from '../utils/AppError';
 import { sendSuccess } from '../utils/response';
 import { AuthRequest } from '../middleware/auth';
+import AccessGroup from '../models/AccessGroup';
 
 
 /**
@@ -51,6 +53,60 @@ export const createResource = async (
         422,
         'VALIDATION_ERROR'
       );
+    }
+
+    // Validate resource type
+    const allowedTypes = [
+      'room',
+      'lab',
+      'desk',
+      'equipment',
+      'vehicle',
+      'court',
+      'other',
+    ];
+
+    if (!allowedTypes.includes(type)) {
+      throw new AppError(
+        'Invalid resource type.',
+        422,
+        'INVALID_RESOURCE_TYPE'
+      );
+    }
+
+    // Validate Access Group (if provided)
+    if (accessGroupId) {
+      if (!mongoose.Types.ObjectId.isValid(accessGroupId)) {
+        throw new AppError(
+          'Invalid access group id.',
+          400,
+          'INVALID_ID'
+        );
+      }
+
+      const accessGroup = await AccessGroup.findById(
+        accessGroupId
+      );
+
+      if (!accessGroup) {
+        throw new AppError(
+          'Access group not found.',
+          404,
+          'ACCESS_GROUP_NOT_FOUND'
+        );
+      }
+
+      // Ensure the access group belongs to the same organization
+      if (
+        accessGroup.organizationId.toString() !==
+        user.organizationId?.toString()
+      ) {
+        throw new AppError(
+          'Access group does not belong to your organization.',
+          403,
+          'FORBIDDEN'
+        );
+      }
     }
 
     const existing = await Resource.findOne({
@@ -180,6 +236,16 @@ export const getResourceById = async (
       );
     }
 
+    const loggedInUser = await User.findById(req.userId);
+
+    if (!loggedInUser) {
+      throw new AppError(
+        'User not found.',
+        404,
+        'USER_NOT_FOUND'
+      );
+    }
+
     const resource = await Resource.findById(id)
       .populate('createdBy', 'name email')
       .populate('organizationId', 'name')
@@ -190,6 +256,21 @@ export const getResourceById = async (
         'Resource not found.',
         404,
         'RESOURCE_NOT_FOUND'
+      );
+    }
+
+    // Super Admin can access every resource.
+    // Other users can only access resources within their organization.
+    if (
+      loggedInUser.role !== 'super_admin' &&
+      resource.organizationId &&
+      resource.organizationId._id.toString() !==
+        loggedInUser.organizationId?.toString()
+    ) {
+      throw new AppError(
+        'You are not authorized to access this resource.',
+        403,
+        'FORBIDDEN'
       );
     }
 
@@ -243,6 +324,7 @@ export const updateResource = async (
       );
     }
 
+    // Organization Ownership Check
     if (
       resource.organizationId.toString() !==
       user.organizationId?.toString()
@@ -267,7 +349,64 @@ export const updateResource = async (
       accessGroupId,
     } = req.body;
 
-    if (name !== undefined) resource.name = name;
+    // Validate Resource Type
+    if (
+      type !== undefined &&
+      ![
+        'room',
+        'lab',
+        'desk',
+        'equipment',
+        'vehicle',
+        'court',
+        'other',
+      ].includes(type)
+    ) {
+      throw new AppError(
+        'Invalid resource type.',
+        422,
+        'VALIDATION_ERROR'
+      );
+    }
+
+    // Validate Capacity
+    if (
+      capacity !== undefined &&
+      (typeof capacity !== 'number' || capacity < 1)
+    ) {
+      throw new AppError(
+        'Capacity must be at least 1.',
+        422,
+        'VALIDATION_ERROR'
+      );
+    }
+
+    // Validate Access Group
+    if (accessGroupId !== undefined) {
+      if (!mongoose.Types.ObjectId.isValid(accessGroupId)) {
+        throw new AppError(
+          'Invalid access group id.',
+          400,
+          'INVALID_ID'
+        );
+      }
+
+      const accessGroup = await AccessGroup.findOne({
+        _id: accessGroupId,
+        organizationId: user.organizationId,
+      });
+
+      if (!accessGroup) {
+        throw new AppError(
+          'Access group not found.',
+          404,
+          'ACCESS_GROUP_NOT_FOUND'
+        );
+      }
+    }
+
+    // Update Fields
+    if (name !== undefined) resource.name = name.trim();
 
     if (type !== undefined) resource.type = type;
 
@@ -309,7 +448,6 @@ export const updateResource = async (
     next(err);
   }
 };
-
 /**
  * PATCH /api/resources/:id/status
  * Space Admin
@@ -438,6 +576,7 @@ export const deleteResource = async (
       );
     }
 
+    // Organization Ownership Check
     if (
       resource.organizationId.toString() !==
       user.organizationId?.toString()
@@ -449,6 +588,28 @@ export const deleteResource = async (
       );
     }
 
+    // Prevent deletion if future bookings exist
+    const futureBookings = await Booking.countDocuments({
+      resourceId: resource._id,
+      startTime: { $gte: new Date() },
+      status: {
+        $in: [
+          'pending',
+          'approved',
+          'completed',
+        ],
+      },
+    });
+
+    if (futureBookings > 0) {
+      throw new AppError(
+        'Resource has active or upcoming bookings and cannot be deleted.',
+        400,
+        'RESOURCE_HAS_ACTIVE_BOOKINGS'
+      );
+    }
+
+    // Soft Delete
     resource.isActive = false;
 
     await resource.save();

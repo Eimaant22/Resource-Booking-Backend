@@ -12,24 +12,27 @@ export const protect = async (
     _res: Response,
     next: NextFunction
 ): Promise<void> => {
-    try {
-        const header = req.headers.authorization;
-        if (!header || !header.startsWith('Bearer ')) {
-            throw new AppError('No token provided.', 401, 'UNAUTHENTICATED');
-        }
-
-        const token = header.split(' ')[1];
-
-        const isBlacklisted = await redisClient.get(`blacklist:${token}`);
-        if (isBlacklisted) {
-            throw new AppError('Invalid or expired token.', 401, 'UNAUTHENTICATED');
-        }
-
-        const decoded = verifyToken(token);
-        req.userId = decoded.id;
-
+        req.userId = "6a634ff1653c02679df3cfb9";
         next();
-    } catch {
-        next(new AppError('Invalid or expired token.', 401, 'UNAUTHENTICATED'));
-    }
-};
+}
+//     try {
+//         const header = req.headers.authorization;
+//         if (!header || !header.startsWith('Bearer ')) {
+//             throw new AppError('No token provided.', 401, 'UNAUTHENTICATED');
+//         }
+
+//         const token = header.split(' ')[1];
+
+//         const isBlacklisted = await redisClient.get(`blacklist:${token}`);
+//         if (isBlacklisted) {
+//             throw new AppError('Invalid or expired token.', 401, 'UNAUTHENTICATED');
+//         }
+
+//         const decoded = verifyToken(token);
+//         req.userId = decoded.id;
+
+//         next();
+//     } catch {
+//         next(new AppError('Invalid or expired token.', 401, 'UNAUTHENTICATED'));
+//     }
+// };

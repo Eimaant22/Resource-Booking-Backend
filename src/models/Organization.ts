@@ -74,7 +74,7 @@ const OrganizationSchema = new Schema<IOrganization>(
   }
 );
 
-OrganizationSchema.index({ name: 1 });
+
 
 export default mongoose.model<IOrganization>(
   'Organization',

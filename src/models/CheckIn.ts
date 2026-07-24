@@ -36,7 +36,7 @@ const CheckInSchema = new Schema<ICheckIn>(
   }
 );
 
-CheckInSchema.index({ bookingId: 1 });
+
 
 export default mongoose.model<ICheckIn>(
   'CheckIn',

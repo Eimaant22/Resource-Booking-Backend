@@ -380,9 +380,20 @@ export const assignSpaceAdmin = async (
     }
 
     user.role = 'space_admin';
-    user.organizationId = organization._id as mongoose.Types.ObjectId;
+    user.organizationId =
+      organization._id as mongoose.Types.ObjectId;
 
     await user.save();
+
+    // Save Audit Log
+    await AuditLog.create({
+      userId: req.userId,
+      action: 'Assign Space Admin',
+      module: 'Organization',
+      entityId: organization._id,
+      description: `Assigned "${user.name}" (${user.email}) as Space Admin for organization "${organization.name}".`,
+      ipAddress: req.ip,
+    });
 
     sendSuccess(res, {
       message: 'Space Admin assigned successfully.',
